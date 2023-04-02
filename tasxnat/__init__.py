@@ -1,1 +1,2 @@
-from tasxnat.tasks import TaskBroker, Taskable, SimpleTaskBroker, SimpleTask
+from tasxnat.tasks import TaskBroker, Taskable, SimpleTaskBroker, SimpleTask, \
+    AsyncSimpleTask
