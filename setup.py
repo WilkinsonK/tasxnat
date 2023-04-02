@@ -9,11 +9,11 @@ DESCRIPTION = "Simple tasking interface."
 LONG_DESCRIPTION = """\
 Allows users to create tasks out of callables.
 """
-DEPENDENCIES = (PROJECT_ROOT / "requirements.txt").read_text().splitlines()
+DEPENDENCIES = []
 
 
 setup(
-    name="aioxnat",
+    name="tasxnat",
     version=".".join([str(v) for v in VERSION]),
     description=DESCRIPTION,
     long_description=LONG_DESCRIPTION,
