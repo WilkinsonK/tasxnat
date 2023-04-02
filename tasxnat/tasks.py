@@ -1,4 +1,4 @@
-import copy, re
+import asyncio, copy, inspect, re
 import abc, typing
 
 RE_TASK_CALLER = re.compile(r"^[\w\.\:]+|\[.+\]$")
@@ -254,7 +254,12 @@ class SimpleTask(Taskable):
 
     def handle(self, *args, **kwds):
         try:
-            self._task(*args, **kwds)
+            if inspect.iscoroutinefunction(self._task):
+                (asyncio.get_event_loop_policy()
+                    .get_event_loop()
+                    .run_until_complete(self._task(*args, **kwds)))
+            else:
+                self._task(*args, **kwds)
         except Exception as error:
             self._failure_reason = str(error)
             self._failure_exception = error
@@ -289,7 +294,14 @@ if __name__ == "__main__":
     def say_hello(name: str = "Duey", age: int = 0):
         print(f"Hello {name}! Your age is {age} years")
 
+    @broker.task(is_strict=True)
+    async def asay_hello(name: str):
+        print(f"Hello {name}")
+
     broker.process_tasks(
+        "__main__:asay_hello[Keenan]",
+        "__main__:asay_hello[Ryan]",
+        "__main__:asay_hello[Helen]",
         "__main__:say_hello[ '' 14]",
         "__main__:say_hello['Klayton' 17 ]",
         "__main__:say_hello[Keenan 27]",

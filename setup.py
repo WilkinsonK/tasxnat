@@ -4,7 +4,7 @@ from setuptools import setup, find_packages
 PROJECT_ROOT = pathlib.Path(__file__).parent
 
 # Configuration
-VERSION = (0, 0, 1)
+VERSION = (0, 0, 2)
 DESCRIPTION = "Simple tasking interface."
 LONG_DESCRIPTION = """\
 Allows users to create tasks out of callables.
