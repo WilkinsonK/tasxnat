@@ -188,10 +188,15 @@ class SimpleTaskBroker(TaskBroker):
     def process_tasks(self, *task_callers: str):
         strict_mode = self.metadata["strict_mode"]
 
+        loop = asyncio.get_event_loop_policy().get_event_loop()
         for task_call in task_callers:
             iden, args, kwds = _parse_task_call(task_call)
             task = copy.deepcopy(self.__register__[iden])
-            task.handle(*args, **kwds)
+
+            if inspect.iscoroutinefunction(task.handle):
+                loop.run_until_complete(task.handle(*args, **kwds))
+            else:
+                task.handle(*args, **kwds)
 
             if task.is_success:
                 continue
@@ -254,12 +259,7 @@ class SimpleTask(Taskable):
 
     def handle(self, *args, **kwds):
         try:
-            if inspect.iscoroutinefunction(self._task):
-                (asyncio.get_event_loop_policy()
-                    .get_event_loop()
-                    .run_until_complete(self._task(*args, **kwds)))
-            else:
-                self._task(*args, **kwds)
+            self._task(*args, **kwds)
         except Exception as error:
             self._failure_reason = str(error)
             self._failure_exception = error
@@ -287,6 +287,20 @@ class SimpleTask(Taskable):
         self._task = fn
 
 
+class AsyncSimpleTask(SimpleTask):
+
+    async def handle(self, *args, **kwds):
+        try:
+            await self._task(*args, **kwds)
+        except Exception as error:
+            self._failure_reason = str(error)
+            self._failure_exception = error
+            return
+
+        self._failure_reason = None
+        self._is_success = True
+
+
 if __name__ == "__main__":
     broker = SimpleTaskBroker(strict_mode=True)
 
@@ -294,7 +308,7 @@ if __name__ == "__main__":
     def say_hello(name: str = "Duey", age: int = 0):
         print(f"Hello {name}! Your age is {age} years")
 
-    @broker.task(is_strict=True)
+    @broker.task(is_strict=True, klass=AsyncSimpleTask)
     async def asay_hello(name: str):
         print(f"Hello {name}")
 
