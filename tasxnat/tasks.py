@@ -1,5 +1,8 @@
-import asyncio, copy, inspect, re
+import asyncio, copy, inspect, multiprocessing as mp, re
 import abc, typing
+from multiprocessing import pool
+
+_PoolFactory = type[pool.Pool] | typing.Callable[[], pool.Pool]
 
 RE_TASK_CALLER = re.compile(r"^[\w\.\:]+|\[.+\]$")
 
@@ -24,10 +27,10 @@ def _parse_task_call(task_call: str) -> tuple[str, tuple[str], dict[str, str]]:
 
         seek1 += 1
         if rparams[seek1] == " " and not in_quotes:
-            preparsed.append(rparams[seek0:seek1].lstrip(" "))
+            preparsed.append(rparams[seek0:seek1].lstrip())
             seek0 = seek1
             continue
-    preparsed.append(rparams[seek0:seek1].lstrip(" "))
+    preparsed.append(rparams[seek0:seek1].lstrip())
 
     args, kwds = (), {} #type: ignore[annotated]
     for rparam in preparsed:
@@ -87,8 +90,22 @@ class TaskBroker(typing.Protocol):
         task manager.
         """
 
+    @typing.overload
     @abc.abstractmethod
     def process_tasks(self, *task_callers: str) -> None:
+        ...
+
+    @typing.overload
+    @abc.abstractmethod
+    def process_tasks(self,
+                      *task_callers: str,
+                      process_count: typing.Optional[int]) -> None:
+        ...
+
+    @abc.abstractmethod
+    def process_tasks(self,
+                      *task_callers: str,
+                      process_count: typing.Optional[int] = None) -> None:
         """
         Executes given tasks from their
         identifiers.
@@ -159,6 +176,8 @@ class SimpleMetaData(typing.TypedDict):
 
 class SimpleTaskBroker(TaskBroker):
 
+    _pool_factory: _PoolFactory
+
     __metadata__: SimpleMetaData
     __register__: dict[str, Taskable] 
 
@@ -171,12 +190,13 @@ class SimpleTaskBroker(TaskBroker):
              *,
              klass: typing.Optional[type[Taskable]] = None,
              is_strict: typing.Optional[bool] = None):
+
         klass = klass or self.metadata["task_class"]
 
-        def wrapper(func):
-            task = klass.from_callable(self, func, is_strict)
+        def wrapper(func) -> Taskable:
+            task = klass.from_callable(self, func, is_strict) #type: ignore[union-attr]
             self.register_task(task)
-            return task
+            return func
 
         if fn:
             return wrapper(fn)
@@ -185,11 +205,21 @@ class SimpleTaskBroker(TaskBroker):
     def register_task(self, taskable: "Taskable"):
         self.__register__[taskable.identifier] = taskable
 
-    def process_tasks(self, *task_callers: str):
-        strict_mode = self.metadata["strict_mode"]
+    def process_tasks(self,
+                      *task_calls: str,
+                      process_count: typing.Optional[int] = None):
+        if not process_count:
+            self._process_tasks(*task_calls)
+            return
 
+        with mp.Pool(process_count) as pool:
+            pool.map(self._process_tasks, task_calls)
+
+    def _process_tasks(self, *task_calls: str):
+        strict_mode = self.metadata["strict_mode"]
         loop = asyncio.get_event_loop_policy().get_event_loop()
-        for task_call in task_callers:
+
+        for task_call in task_calls:
             iden, args, kwds = _parse_task_call(task_call)
             task = copy.deepcopy(self.__register__[iden])
 
@@ -214,19 +244,22 @@ class SimpleTaskBroker(TaskBroker):
     def __init__(self,
                  *,
                  strict_mode: typing.Optional[bool] = None,
-                 task_class: typing.Optional[type[Taskable]] = None):
+                 task_class: typing.Optional[type[Taskable]] = None,
+                 pool_factory: typing.Optional[type[pool.Pool]] = None):
         ...
 
     def __init__(self,
                  *,
                  strict_mode: typing.Optional[bool] = None,
-                 task_class: typing.Optional[type[Taskable]] = None):
+                 task_class: typing.Optional[type[Taskable]] = None,
+                 pool_factory: typing.Optional[_PoolFactory] = None):
         self.__metadata__ = (
             {
                 "strict_mode": strict_mode or False,
                 "task_class": task_class or SimpleTask
             })
         self.__register__ = {}
+        self._pool_factory = pool_factory or mp.Pool
 
 
 class SimpleTask(Taskable):
@@ -312,7 +345,7 @@ if __name__ == "__main__":
     async def asay_hello(name: str):
         print(f"Hello {name}")
 
-    broker.process_tasks(
+    task_calls = (
         "__main__:asay_hello[Keenan]",
         "__main__:asay_hello[Ryan]",
         "__main__:asay_hello[Helen]",
@@ -321,3 +354,5 @@ if __name__ == "__main__":
         "__main__:say_hello[Keenan 27]",
         "__main__:say_hello[\"Lucy\" age='32']",
         "__main__:say_hello['Huey Luis']")
+
+    broker.process_tasks(*task_calls, process_count=8)
