@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tasxnat"
+description = "Simple tasking interface."
+authors = [{name = "Keenan W. Wilkinson", email = "keenanwilkinson@outlook.com"}]
+license = { text = "MIT" }
+keywords = ["tasks"]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License"
+]
+dependencies = []
+requires-python = ">=3.10.0"
+dynamic = ["version"]
+
+[tool.setuptools.dynamic]
+version = {attr = "tasxnat.__version__"}
