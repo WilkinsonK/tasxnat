@@ -1,5 +1,6 @@
 import asyncio, copy, inspect, multiprocessing as mp, re
 import abc, typing
+from concurrent.futures import ThreadPoolExecutor, wait as fut_wait
 from multiprocessing import pool
 
 _PoolFactory = type[pool.Pool] | typing.Callable[[], pool.Pool]
@@ -51,6 +52,83 @@ def _parse_task_call(task_call: str) -> tuple[str, tuple[str], dict[str, str]]:
             kwds[k] = v.strip("'\" ")
 
     return caller, args, kwds #type: ignore[return-value]
+
+
+def _flatten_to_taskmaps(
+        *task_calls: str) -> list[tuple[str, typing.Iterable[tuple[tuple, dict]]]]:
+    """
+    Parses the given task calls grouping callargs
+    with their task name. This makes it so all
+    similar task calls are grouped together.
+    """
+
+    # Collect all task calls in groups to
+    # process similar calls together.
+    taskable_map = dict[str, tuple]()
+    for task_call in task_calls:
+        iden, *callargs = _parse_task_call(task_call)
+        if iden in taskable_map:
+            taskable_map[iden] += (callargs,)
+        else:
+            taskable_map[iden] = (callargs,)
+
+    # Flatten the taskable map for pool
+    # consumption
+    return [(iden, calls) for iden, calls in taskable_map.items()]
+
+
+def _handle_coroutine(coro: typing.Coroutine):
+    policy = asyncio.get_event_loop_policy()
+    try:
+        loop = policy.get_event_loop()
+    except RuntimeError:
+        loop = policy.new_event_loop()
+    return loop.run_until_complete(coro)
+
+
+def _process_tasks(
+        root_task: "Taskable",
+        calls: typing.Iterable[tuple[tuple, dict]],
+        strict_mode: bool):
+    for args, kwds in calls:
+        task = copy.deepcopy(root_task)
+
+        task.handle(*args, **kwds)
+        if task.is_success:
+            continue
+
+        # Bail on first failure if strict mode.
+        if strict_mode and task.is_strict:
+            if task.failure[1]:
+                raise task.failure[1]
+
+
+def _process_tasks_multi(
+        root_task: "Taskable",
+        calls: typing.Iterable[tuple[tuple, dict]],
+        strict_mode: bool):
+    tpool = ThreadPoolExecutor(root_task.thread_count, root_task.identifier)
+    # loop = asyncio.get_event_loop_policy().get_event_loop()
+
+    def inner(call: tuple[tuple, dict]):
+        task = copy.deepcopy(root_task)
+        args, kwds = call
+        task.handle(*args, **kwds)
+
+        if task.is_success:
+            return
+
+        if strict_mode and task.is_strict:
+            _, err = task.failure
+            raise err #type: ignore[misc]
+
+    with tpool:
+        results = fut_wait([
+            tpool.submit(inner, call)
+            for call in calls], 30, "FIRST_EXCEPTION")
+
+        for result in results.done:
+            result.result()
 
 
 class TaskBroker(typing.Protocol):
@@ -137,6 +215,22 @@ class Taskable(typing.Protocol):
 
     @property
     @abc.abstractmethod
+    def thread_count(self) -> int:
+        """
+        Number of threads this task is allowed to
+        run in at one time.
+        """
+
+    @property
+    @abc.abstractmethod
+    def is_async(self) -> bool:
+        """
+        Whether this task is an asyncronous
+        callable.
+        """
+
+    @property
+    @abc.abstractmethod
     def is_strict(self) -> bool:
         """
         Whether this task should cause subsequent
@@ -162,7 +256,9 @@ class Taskable(typing.Protocol):
     def from_callable(cls,
                       broker: TaskBroker,
                       fn: typing.Callable,
-                      is_strict: typing.Optional[bool]) -> typing.Self:
+                      thread_count: typing.Optional[int],
+                      is_strict: typing.Optional[bool],
+                      is_async: typing.Optional[bool]) -> typing.Self:
         """
         Create a `Taskable` from a callable
         object.
@@ -177,6 +273,7 @@ class SimpleMetaData(typing.TypedDict):
 class SimpleTaskBroker(TaskBroker):
 
     _pool_factory: _PoolFactory
+    _pool_max_timeout: int = 30
 
     __metadata__: SimpleMetaData
     __register__: dict[str, Taskable] 
@@ -189,12 +286,19 @@ class SimpleTaskBroker(TaskBroker):
              fn: typing.Optional[typing.Callable] = None,
              *,
              klass: typing.Optional[type[Taskable]] = None,
-             is_strict: typing.Optional[bool] = None):
+             thread_count: typing.Optional[int] = None,
+             is_strict: typing.Optional[bool] = None,
+             is_async: typing.Optional[bool] = None):
 
         klass = klass or self.metadata["task_class"]
 
         def wrapper(func) -> Taskable:
-            task = klass.from_callable(self, func, is_strict) #type: ignore[union-attr]
+            task = klass.from_callable( #type: ignore[union-attr]
+                self,
+                func,
+                thread_count,
+                is_strict,
+                is_async)
             self.register_task(task)
             return func
 
@@ -208,33 +312,29 @@ class SimpleTaskBroker(TaskBroker):
     def process_tasks(self,
                       *task_calls: str,
                       process_count: typing.Optional[int] = None):
-        if not process_count:
-            self._process_tasks(*task_calls)
+        task_call_maps = _flatten_to_taskmaps(*task_calls)
+
+        # Don't even bother with multiproc mode.
+        # Run in main thread syncronously.
+        if not process_count or process_count == 1:
+            for iden, calls in task_call_maps:
+                self._process_tasks(iden, calls)
             return
 
-        with mp.Pool(process_count) as pool:
-            pool.map(self._process_tasks, task_calls)
+        with mp.Pool(process_count) as p:
+            result = p.starmap_async(self._process_tasks, task_call_maps)
+            result.get(self._pool_max_timeout)
 
-    def _process_tasks(self, *task_calls: str):
+    def _process_tasks(self,
+                       iden: str,
+                       calls: typing.Iterable[tuple[tuple, dict]]):
         strict_mode = self.metadata["strict_mode"]
-        loop = asyncio.get_event_loop_policy().get_event_loop()
+        root_task = self.__register__[iden]
 
-        for task_call in task_calls:
-            iden, args, kwds = _parse_task_call(task_call)
-            task = copy.deepcopy(self.__register__[iden])
-
-            if inspect.iscoroutinefunction(task.handle):
-                loop.run_until_complete(task.handle(*args, **kwds))
-            else:
-                task.handle(*args, **kwds)
-
-            if task.is_success:
-                continue
-
-            # Bail on first failure.
-            if strict_mode and task.is_strict:
-                if task.failure[1]:
-                    raise task.failure[1]
+        if root_task.thread_count <= 1:
+            _process_tasks(root_task, calls, strict_mode)
+        else:
+            _process_tasks_multi(root_task, calls, strict_mode)
 
     @typing.overload
     def __init__(self, /):
@@ -266,8 +366,10 @@ class SimpleTask(Taskable):
     _broker: TaskBroker
     _failure_reason: str | None
     _failure_exception: Exception | None
+    _is_async: bool
     _is_strict: bool
     _is_success: bool
+    _thread_count: int
     _task: typing.Callable
 
     @property
@@ -283,6 +385,14 @@ class SimpleTask(Taskable):
         return (self._failure_reason, self._failure_exception)
 
     @property
+    def thread_count(self):
+        return self._thread_count
+
+    @property
+    def is_async(self):
+        return self._is_async
+
+    @property
     def is_strict(self):
         return self._is_strict
 
@@ -292,7 +402,9 @@ class SimpleTask(Taskable):
 
     def handle(self, *args, **kwds):
         try:
-            self._task(*args, **kwds)
+            result = self._task(*args, **kwds)
+            if self.is_async:
+                _handle_coroutine(result)
         except Exception as error:
             self._failure_reason = str(error)
             self._failure_exception = error
@@ -305,33 +417,30 @@ class SimpleTask(Taskable):
     def from_callable(cls,
                       broker: TaskBroker,
                       fn: typing.Callable,
-                      is_strict: typing.Optional[bool] = None):
-        return cls(broker, fn, is_strict)
+                      thread_count: typing.Optional[int] = None,
+                      is_strict: typing.Optional[bool] = None,
+                      is_async: typing.Optional[bool] = None):
+        return cls(broker, fn, thread_count, is_strict, is_async)
 
     def __init__(self,
                  broker: TaskBroker,
                  fn: typing.Callable,
-                 is_strict: typing.Optional[bool] = None):
+                 thread_count: typing.Optional[int] = None,
+                 is_strict: typing.Optional[bool] = None,
+                 is_async: typing.Optional[bool] = None):
         self._broker = broker
         self._failure_reason = "Task was never handled."
         self._failure_exception = None
-        self._is_strict = is_strict or False
-        self._is_success = False
         self._task = fn
 
+        self._thread_count = thread_count or 1
 
-class AsyncSimpleTask(SimpleTask):
-
-    async def handle(self, *args, **kwds):
-        try:
-            await self._task(*args, **kwds)
-        except Exception as error:
-            self._failure_reason = str(error)
-            self._failure_exception = error
-            return
-
-        self._failure_reason = None
-        self._is_success = True
+        # Flag parsing goes here.
+        self._is_async = (
+            is_async if is_async is not None
+            else inspect.iscoroutinefunction(fn))
+        self._is_strict = is_strict or False
+        self._is_success = False
 
 
 if __name__ == "__main__":
@@ -341,7 +450,7 @@ if __name__ == "__main__":
     def say_hello(name: str = "Duey", age: int = 0):
         print(f"Hello {name}! Your age is {age} years")
 
-    @broker.task(is_strict=True, klass=AsyncSimpleTask)
+    @broker.task(is_strict=True, is_async=False)
     async def asay_hello(name: str):
         print(f"Hello {name}")
 
@@ -355,4 +464,4 @@ if __name__ == "__main__":
         "__main__:say_hello[\"Lucy\" age='32']",
         "__main__:say_hello['Huey Luis']")
 
-    broker.process_tasks(*task_calls, process_count=8)
+    broker.process_tasks(*task_calls, process_count=1)
