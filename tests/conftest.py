@@ -45,7 +45,7 @@ def parsed_task_call(task_call):
     return _parse_task_call(task_call)
 
 
-@pytest.fixture(params=[True, False])
+@pytest.fixture(params=["sync", "async"])
 def taskable_callable(request):
 
     def example_func(*args, **kwds):
@@ -54,15 +54,30 @@ def taskable_callable(request):
     async def example_async_func(*args, **kwds):
         ...
 
-    if request.param:
+    if request.param == "sync":
         return example_func
-    return example_async_func
+    else:
+        return example_async_func
 
 
 @pytest.fixture
-def taskable(taskable_callable, optsmallint, optbool1, optbool2):
+def taskable(taskable_callable, optsmallint, optbool1):
     return SimpleTaskable.from_callable(
+        object,
         taskable_callable,
+        optsmallint,
+        optbool1)
+
+
+@pytest.fixture
+def bad_taskable(optsmallint, optbool1, optbool2):
+
+    def this_taskable_fails(*args, **kwds):
+        raise RuntimeError("This is a testing failure.")
+
+    return SimpleTaskable.from_callable(
+        object,
+        this_taskable_fails,
         optsmallint,
         optbool1,
         optbool2)
