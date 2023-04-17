@@ -84,6 +84,7 @@ class Taskable(typing.Protocol):
         """
 
 
+@typing.runtime_checkable
 class TaskBroker(typing.Protocol):
     """
     Manages `Taskable` objects. This includes

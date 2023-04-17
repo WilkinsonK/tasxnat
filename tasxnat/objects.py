@@ -53,7 +53,7 @@ class SimpleTaskBroker(TaskBroker):
             return wrapper(fn)
         return wrapper
 
-    def register_task(self, taskable: "Taskable"):
+    def register_task(self, taskable: Taskable):
         self.__register__[taskable.identifier] = taskable
 
     def process_tasks(self,

@@ -1,7 +1,19 @@
 import pytest
 
-from tasxnat.objects import SimpleTaskable
+from tasxnat.objects import SimpleTaskable, SimpleTaskBroker
 from tasxnat.utilities import *
+
+
+def example_func(*args, **kwds):
+    ...
+
+
+async def example_async_func(*args, **kwds):
+    ...
+
+
+def this_taskable_fails(*args, **kwds):
+    raise RuntimeError("This is a testing failure.")
 
 
 @pytest.fixture(params=[True, False, None])
@@ -48,12 +60,6 @@ def parsed_task_call(task_call):
 @pytest.fixture(params=["sync", "async"])
 def taskable_callable(request):
 
-    def example_func(*args, **kwds):
-        ...
-
-    async def example_async_func(*args, **kwds):
-        ...
-
     if request.param == "sync":
         return example_func
     else:
@@ -63,21 +69,23 @@ def taskable_callable(request):
 @pytest.fixture
 def taskable(taskable_callable, optsmallint, optbool1):
     return SimpleTaskable.from_callable(
-        object,
+        object, #type: ignore
         taskable_callable,
         optsmallint,
         optbool1)
 
 
 @pytest.fixture
-def bad_taskable(optsmallint, optbool1, optbool2):
-
-    def this_taskable_fails(*args, **kwds):
-        raise RuntimeError("This is a testing failure.")
+def bad_taskable(optsmallint, optbool1):
 
     return SimpleTaskable.from_callable(
-        object,
+        object, #type: ignore
         this_taskable_fails,
         optsmallint,
-        optbool1,
-        optbool2)
+        True,
+        optbool1)
+
+
+@pytest.fixture
+def task_broker():
+    return SimpleTaskBroker(strict_mode=True)
