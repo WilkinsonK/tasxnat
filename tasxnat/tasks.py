@@ -441,27 +441,3 @@ class SimpleTask(Taskable):
             else inspect.iscoroutinefunction(fn))
         self._is_strict = is_strict or False
         self._is_success = False
-
-
-if __name__ == "__main__":
-    broker = SimpleTaskBroker(strict_mode=True)
-
-    @broker.task(is_strict=True)
-    def say_hello(name: str = "Duey", age: int = 0):
-        print(f"Hello {name}! Your age is {age} years")
-
-    @broker.task(is_strict=True, is_async=False)
-    async def asay_hello(name: str):
-        print(f"Hello {name}")
-
-    task_calls = (
-        "__main__:asay_hello[Keenan]",
-        "__main__:asay_hello[Ryan]",
-        "__main__:asay_hello[Helen]",
-        "__main__:say_hello[ '' 14]",
-        "__main__:say_hello['Klayton' 17 ]",
-        "__main__:say_hello[Keenan 27]",
-        "__main__:say_hello[\"Lucy\" age='32']",
-        "__main__:say_hello['Huey Luis']")
-
-    broker.process_tasks(*task_calls, process_count=1)
