@@ -11,6 +11,7 @@ __all__ = (
 _PoolFactory = type[pool.Pool] | typing.Callable[[], pool.Pool]
 
 
+@typing.runtime_checkable
 class Taskable(typing.Protocol):
     """
     Handles some task defined by this class.

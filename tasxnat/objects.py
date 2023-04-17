@@ -6,6 +6,12 @@ from tasxnat.protocols import Taskable, TaskBroker, _PoolFactory
 from tasxnat.utilities import *
 
 
+__all__ = (
+    (
+        "SimpleTaskBroker",
+        "SimpleTaskable"
+    ))
+
 class SimpleMetaData(typing.TypedDict):
     strict_mode: bool
     task_class: type[Taskable]
@@ -97,13 +103,13 @@ class SimpleTaskBroker(TaskBroker):
         self.__metadata__ = (
             {
                 "strict_mode": strict_mode or False,
-                "task_class": task_class or SimpleTask
+                "task_class": task_class or SimpleTaskable
             })
         self.__register__ = {}
         self._pool_factory = pool_factory or mp.Pool
 
 
-class SimpleTask(Taskable):
+class SimpleTaskable(Taskable):
     _broker: TaskBroker
     _failure_reason: str | None
     _failure_exception: Exception | None
