@@ -223,20 +223,68 @@ class TaskBroker(typing.Protocol):
         object.
         """
 
+    @typing.overload
     @abc.abstractmethod
     def before(
         self,
-        wrapped: TaskedCallable, fn: _TCStackCallable) -> TaskedCallable:
+        fn: _TCStackCallable, /) -> typing.Callable[[], TaskedCallable]:
+        ...
+
+    @typing.overload
+    @abc.abstractmethod
+    def before(
+        self,
+        fn1: TaskedCallable,
+        fn2: _TCStackCallable, /) -> TaskedCallable:
+        ...
+
+    @typing.overload
+    @abc.abstractmethod
+    def before(
+        self,
+        fn1: TaskedCallable | _TCStackCallable,
+        fn2: TaskedCallable | _TCStackCallable | None, /) -> TaskedCallable | typing.Callable[[], TaskedCallable]:
+        ...
+
+    @abc.abstractmethod
+    def before(
+        self,
+        fn1: TaskedCallable | _TCStackCallable,
+        fn2: TaskedCallable | _TCStackCallable | None = None) -> TaskedCallable | typing.Callable[[], TaskedCallable]:
         """
         Push the target callable on to the
         *before* stack of the given
         `TaskedCallable`.
         """
 
+    @typing.overload
     @abc.abstractmethod
     def after(
         self,
-        wrapped: TaskedCallable, fn: _TCStackCallable) -> TaskedCallable:
+        fn: _TCStackCallable, /) -> typing.Callable[[], TaskedCallable]:
+        ...
+
+    @typing.overload
+    @abc.abstractmethod
+    def after(
+        self,
+        fn1: TaskedCallable,
+        fn2: _TCStackCallable, /) -> TaskedCallable:
+        ...
+
+    @typing.overload
+    @abc.abstractmethod
+    def after(
+        self,
+        fn1: TaskedCallable | _TCStackCallable,
+        fn2: TaskedCallable | _TCStackCallable | None, /) -> TaskedCallable | typing.Callable[[], TaskedCallable]:
+        ...
+
+    @abc.abstractmethod
+    def after(
+        self,
+        fn1: TaskedCallable | _TCStackCallable,
+        fn2: TaskedCallable | _TCStackCallable | None = None) -> TaskedCallable | typing.Callable[[], TaskedCallable]:
         """
         Push the target callable on to the
         *after* stack of the given

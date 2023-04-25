@@ -246,13 +246,29 @@ class SimpleTaskBroker(TaskBroker):
             return wrapper(fn)
         return wrapper
 
-    def before(self, wrapped, fn):
-        wrapped.push_before(fn)
-        return wrapped
+    def before(self, fn1, fn2=None):
 
-    def after(self, wrapped, fn):
-        wrapped.push_after(fn)
-        return wrapped
+        if fn2:
+            fn1.push_before(fn2)
+            return fn1
+
+        def inner(fn2):
+            fn2.push_before(fn1)
+            return fn2
+
+        return inner
+
+    def after(self, fn1, fn2=None):
+
+        if fn2:
+            fn1.push_after(fn2)
+            return fn1
+
+        def inner(fn2):
+            fn2.push_after(fn1)
+            return fn2
+
+        return inner
 
     def register_task(self, taskable):
         self.__register__[taskable.identifier] = taskable
