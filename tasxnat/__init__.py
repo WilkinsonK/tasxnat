@@ -10,7 +10,7 @@ __all__ = (
         "SimpleTaskable",
         "SimpleTaskBroker"
     ))
-__version__ = (0, 0, 5)
+__version__ = (0, 0, 6)
 
 from tasxnat.protocols import Taskable, TaskBroker
 from tasxnat.objects import SimpleTaskable, SimpleTaskBroker
