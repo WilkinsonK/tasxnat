@@ -2,25 +2,218 @@ import inspect, multiprocessing as mp
 import typing
 from multiprocessing import pool
 
-from tasxnat.protocols import Taskable, TaskBroker, _PoolFactory
+from tasxnat.protocols import\
+(
+    Taskable,
+    TaskBroker,
+    TaskedCallable,
+    _PoolFactory,
+    _TaskableCallable,
+    _TCStackCallable,
+    _TCStack
+)
 from tasxnat.utilities import *
 
 
 __all__ = (
     (
         "SimpleTaskBroker",
-        "SimpleTaskable"
+        "SimpleTaskable",
+        "SimpleTaskedCallable"
     ))
+
+
+def _simple_identifier(task: typing.Callable):
+    return ":".join([task.__module__, task.__name__])
+
 
 class SimpleMetaData(typing.TypedDict):
     strict_mode: bool
     task_class: type[Taskable]
 
 
+
+class SimpleTaskedCallable(TaskedCallable):
+    _is_async: bool
+
+    __taskable__: "Taskable"
+    __task__: _TaskableCallable
+    __before_tasks__: _TCStack
+    __after_tasks__: _TCStack
+
+    @property
+    def args(self):
+        return self.__called_args__
+
+    @property
+    def kwds(self):
+        return self.__called_kwds__
+
+    @property
+    def is_async(self) -> bool:
+        return self._is_async
+
+    @property
+    def taskable(self):
+        return self.__taskable__
+
+    def push_before(self, fn):
+        self.__before_tasks__.append(fn)
+
+    def push_after(self, fn):
+        self.__after_tasks__.append(fn)
+
+    def __init__(self, parent, fn, *, is_async: bool | None = None):
+        self.__taskable__ = parent
+        self.__task__ = fn
+        self.__before_tasks__ = [] #type: ignore[assignment]
+        self.__after_tasks__ = [] #type: ignore[assignment]
+
+        self._is_async = is_async or False
+
+        setattr(self, "__name__", fn.__name__)
+        setattr(self, "__module__", fn.__module__)
+
+    def __call__(self, *args, **kwds):
+        self.__called_args__ = args
+        self.__called_kwds__ = kwds
+
+        self.__before__()
+        rt = self.__task__(self.taskable, *self.args, **self.kwds)
+        self.__after__()
+
+        return rt
+
+    def __before__(self):
+        for fn in self.__before_tasks__:
+            fn(self)
+
+    def __after__(self) -> None:
+        for fn in self.__after_tasks__:
+            fn(self)
+
+
+class AsyncTaskedCallable(SimpleTaskedCallable):
+
+    async def __call__(self, *args, **kwds):
+        self.__called_args__ = args
+        self.__called_kwds__ = kwds
+
+        await self.__before__()
+        rt = await self.__task__(self.__taskable__, *self.args, **self.kwds)
+        await self.__after__()
+
+        return rt
+
+    async def __before__(self):
+        for fn in self.__before_tasks__:
+            await self._handle_procedure(fn)
+
+    async def __after__(self):
+        for fn in self.__after_tasks__:
+            await self._handle_procedure(fn)
+
+    async def _handle_procedure(self, fn: _TCStackCallable):
+        if inspect.iscoroutinefunction(fn):
+            await fn(self)
+        else:
+            fn(self)
+
+
+class SimpleTaskable(Taskable):
+    callable_class: typing.ClassVar[type[TaskedCallable] | None] = None
+
+    _broker: TaskBroker
+    _failure_reason: str | None
+    _failure_exception: Exception | None
+    _is_strict: bool
+    _is_success: bool
+    _thread_count: int
+    _task: TaskedCallable
+
+    @property
+    def identifier(self):
+        return _simple_identifier(self._task)
+
+    @property
+    def broker(self):
+        return self._broker
+
+    @property
+    def failure(self):
+        return (self._failure_reason, self._failure_exception)
+
+    @property
+    def thread_count(self):
+        return self._thread_count
+
+    @property
+    def is_async(self):
+        return self._task.is_async
+
+    @property
+    def is_strict(self):
+        return self._is_strict
+
+    @property
+    def is_success(self):
+        return self._is_success
+
+    def handle(self, *args, **kwds):
+        try:
+            result = self._task(*args, **kwds)
+            if self.is_async:
+                _handle_coroutine(result)
+        except Exception as error:
+            self._failure_reason = str(error)
+            self._failure_exception = error
+            return
+
+        self._failure_reason = None
+        self._is_success = True
+
+    @classmethod
+    def from_callable(cls,
+                      broker,
+                      fn,
+                      thread_count=None,
+                      is_strict=None,
+                      is_async=None):
+        return cls(broker, fn, thread_count, is_strict, is_async)
+
+    def __init__(self,
+                 broker: TaskBroker,
+                 fn: typing.Callable,
+                 thread_count: typing.Optional[int] = None,
+                 is_strict: typing.Optional[bool] = None,
+                 is_async: typing.Optional[bool] = None):
+        self._broker = broker
+        self._failure_reason = "Task was never handled."
+        self._failure_exception = None
+
+        is_async =\
+        is_async if is_async is not None else inspect.iscoroutinefunction(fn)
+
+        if not self.callable_class:
+            if is_async:
+                callable_class = AsyncTaskedCallable
+            else:
+                callable_class = SimpleTaskedCallable #type: ignore[assignment]
+            self._task = callable_class(self, fn, is_async=is_async)
+        else:
+            self._task = self.callable_class(self, fn)
+
+        self._thread_count = thread_count or 1
+
+        # Flag parsing goes here.
+        self._is_strict = is_strict or False
+        self._is_success = False
+
+
 class SimpleTaskBroker(TaskBroker):
 
     _pool_factory: _PoolFactory
-    _pool_max_timeout: int = 30
+    _pool_max_timeout: typing.ClassVar[float | int] = 30
 
     __metadata__: SimpleMetaData
     __register__: dict[str, Taskable] 
@@ -29,18 +222,18 @@ class SimpleTaskBroker(TaskBroker):
     def metadata(self):
         return self.__metadata__
 
-    def task(self, #type: ignore[override]
-             fn: typing.Optional[typing.Callable] = None,
+    def task(self,
+             fn=None,
              *,
-             klass: typing.Optional[type[Taskable]] = None,
-             thread_count: typing.Optional[int] = None,
-             is_strict: typing.Optional[bool] = None,
-             is_async: typing.Optional[bool] = None):
+             klass=None,
+             thread_count=None,
+             is_strict=None,
+             is_async=None):
 
         klass = klass or self.metadata["task_class"]
 
-        def wrapper(func) -> Taskable:
-            task = klass.from_callable( #type: ignore[union-attr]
+        def wrapper(func) -> TaskedCallable:
+            task = klass.from_callable(
                 self,
                 func,
                 thread_count,
@@ -53,13 +246,19 @@ class SimpleTaskBroker(TaskBroker):
             return wrapper(fn)
         return wrapper
 
-    def register_task(self, taskable: Taskable):
+    def before(self, wrapped, fn):
+        wrapped.push_before(fn)
+        return wrapped
+
+    def after(self, wrapped, fn):
+        wrapped.push_after(fn)
+        return wrapped
+
+    def register_task(self, taskable):
         self.__register__[taskable.identifier] = taskable
 
-    def process_tasks(self,
-                      *task_calls: str,
-                      process_count: typing.Optional[int] = None):
-        task_call_maps = _flatten_to_taskmaps(*task_calls)
+    def process_tasks(self, *task_callers, process_count=None):
+        task_call_maps = _flatten_to_taskmaps(*task_callers)
 
         # Don't even bother with multiproc mode.
         # Run in main thread syncronously.
@@ -107,84 +306,3 @@ class SimpleTaskBroker(TaskBroker):
             })
         self.__register__ = {}
         self._pool_factory = pool_factory or mp.Pool
-
-
-class SimpleTaskable(Taskable):
-    _broker: TaskBroker
-    _failure_reason: str | None
-    _failure_exception: Exception | None
-    _is_async: bool
-    _is_strict: bool
-    _is_success: bool
-    _thread_count: int
-    _task: typing.Callable
-
-    @property
-    def identifier(self):
-        return ":".join([self._task.__module__, self._task.__name__])
-
-    @property
-    def broker(self):
-        return self._broker
-
-    @property
-    def failure(self):
-        return (self._failure_reason, self._failure_exception)
-
-    @property
-    def thread_count(self):
-        return self._thread_count
-
-    @property
-    def is_async(self):
-        return self._is_async
-
-    @property
-    def is_strict(self):
-        return self._is_strict
-
-    @property
-    def is_success(self):
-        return self._is_success
-
-    def handle(self, *args, **kwds):
-        try:
-            result = self._task(*args, **kwds)
-            if self.is_async:
-                _handle_coroutine(result)
-        except Exception as error:
-            self._failure_reason = str(error)
-            self._failure_exception = error
-            return
-
-        self._failure_reason = None
-        self._is_success = True
-
-    @classmethod
-    def from_callable(cls,
-                      broker: TaskBroker,
-                      fn: typing.Callable,
-                      thread_count: typing.Optional[int] = None,
-                      is_strict: typing.Optional[bool] = None,
-                      is_async: typing.Optional[bool] = None):
-        return cls(broker, fn, thread_count, is_strict, is_async)
-
-    def __init__(self,
-                 broker: TaskBroker,
-                 fn: typing.Callable,
-                 thread_count: typing.Optional[int] = None,
-                 is_strict: typing.Optional[bool] = None,
-                 is_async: typing.Optional[bool] = None):
-        self._broker = broker
-        self._failure_reason = "Task was never handled."
-        self._failure_exception = None
-        self._task = fn
-
-        self._thread_count = thread_count or 1
-
-        # Flag parsing goes here.
-        self._is_async = (
-            is_async if is_async is not None
-            else inspect.iscoroutinefunction(fn))
-        self._is_strict = is_strict or False
-        self._is_success = False

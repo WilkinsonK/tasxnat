@@ -96,6 +96,7 @@ def _handle_coroutine(coro: typing.Coroutine):
         loop = policy.get_event_loop()
     except RuntimeError:
         loop = policy.new_event_loop()
+
     return loop.run_until_complete(coro)
 
 
@@ -124,8 +125,8 @@ def _process_tasks_multi(
     # loop = asyncio.get_event_loop_policy().get_event_loop()
 
     def inner(call: tuple[tuple, dict]):
-        task = copy.deepcopy(root_task)
         args, kwds = call
+        task = copy.deepcopy(root_task)
         task.handle(*args, **kwds)
 
         if task.is_success:
