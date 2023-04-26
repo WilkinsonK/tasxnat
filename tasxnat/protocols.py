@@ -40,12 +40,20 @@ class TaskedCallable(typing.Protocol[_Ps, _RT_co]):
 
     @property
     @abc.abstractmethod
-    def args(self) -> tuple[typing.Any, ...]:
+    def args(self) -> typing.ParamSpecArgs:
         """VarArgs passed into this callable."""
+
+    @args.setter
+    @abc.abstractmethod
+    def args(self, *args: typing.ParamSpecArgs):
+        """
+        Set the VarArgs passed into this
+        callable.
+        """
 
     @property
     @abc.abstractmethod
-    def kwds(self) -> typing.Mapping[str, typing.Any]:
+    def kwds(self) -> typing.ParamSpecKwargs:
         """
         Keyword VarArgs passed into this
         callable.

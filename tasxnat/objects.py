@@ -19,7 +19,8 @@ __all__ = (
     (
         "SimpleTaskBroker",
         "SimpleTaskable",
-        "SimpleTaskedCallable"
+        "SimpleTaskedCallable",
+        "AsyncTaskedCallable"
     ))
 
 
@@ -45,12 +46,16 @@ class SimpleTaskedCallable(TaskedCallable):
     def args(self):
         return self.__called_args__
 
+    @args.setter
+    def args(self, args):
+        self.__called_args__ = args
+
     @property
     def kwds(self):
         return self.__called_kwds__
 
     @property
-    def is_async(self) -> bool:
+    def is_async(self):
         return self._is_async
 
     @property
@@ -293,9 +298,11 @@ class SimpleTaskBroker(TaskBroker):
             result = p.starmap_async(self._process_tasks, task_call_maps)
             result.get(self._pool_max_timeout)
 
-    def _process_tasks(self,
-                       iden: str,
-                       calls: typing.Iterable[tuple[tuple, dict]]):
+    def _process_tasks(
+            self,
+            iden: str,
+            calls: typing.Iterable[tuple[tuple, dict]]):
+
         strict_mode = self.metadata["strict_mode"]
         root_task = self.__register__[iden]
 

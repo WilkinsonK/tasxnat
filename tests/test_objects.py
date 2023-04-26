@@ -1,5 +1,6 @@
-from tasxnat.protocols import Taskable, TaskBroker
+from tasxnat.protocols import Taskable, TaskBroker, TaskedCallable
 from tasxnat.objects import *
+from tasxnat.objects import _simple_identifier
 
 
 class TestTaskableObjects:
@@ -64,3 +65,37 @@ class TestTaskBrokerObjects:
             "Bad test Taskable is expected to throw a RuntimeError."
         assert (message == "This is a testing failure."), \
             f"Expected a specific failing message, got {message!r}"
+
+    def test_can_push_before(self, task_broker: TaskBroker):
+
+        def some_before_task(tasked):
+            word, *args = tasked.args
+            word += " Red"
+            tasked.args = (word, *args)
+
+        @task_broker.before(some_before_task)
+        @task_broker.task(is_strict=True)
+        def taskable_func(_, *args, **kwds):
+            word, *args = args
+            word += " Ridinghood"
+
+            assert word == "Little Red Ridinghood",\
+                "Expected a certain message from call response."
+
+        identifier = _simple_identifier(taskable_func)
+        task_broker.process_tasks(f"{identifier}[Little]")
+
+    def test_can_push_after(self, task_broker: TaskBroker):
+
+        def some_after_task(tasked: TaskedCallable):
+            word, *args = tasked.args
+            word += " Red"
+            tasked.args = (word, *args)
+
+        @task_broker.after(some_after_task)
+        @task_broker.task(is_strict=True)
+        def taskable_func(_, *args, **kwds):
+            return (args, kwds)
+
+        identifier = _simple_identifier(taskable_func)
+        task_broker.process_tasks(f"{identifier}[Little]")

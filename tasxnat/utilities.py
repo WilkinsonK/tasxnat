@@ -104,6 +104,7 @@ def _process_tasks(
         root_task: Taskable,
         calls: typing.Iterable[tuple[tuple, dict]],
         strict_mode: bool):
+
     for args, kwds in calls:
         task = copy.deepcopy(root_task)
 
