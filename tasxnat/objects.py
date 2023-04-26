@@ -106,11 +106,11 @@ class AsyncTaskedCallable(SimpleTaskedCallable):
         return rt
 
     async def __before__(self):
-        for fn in self.__before_tasks__:
+        for fn in reversed(self.__before_tasks__):
             await self._handle_procedure(fn)
 
     async def __after__(self):
-        for fn in self.__after_tasks__:
+        for fn in reversed(self.__after_tasks__):
             await self._handle_procedure(fn)
 
     async def _handle_procedure(self, fn: _TCStackCallable):
@@ -262,14 +262,17 @@ class SimpleTaskBroker(TaskBroker):
         return inner
 
     def after(self, fn1, fn2=None):
+        task_getter = lambda fn:  self.__register__[_simple_identifier(fn)]
 
         if fn2:
-            fn1.push_after(fn2)
+            task = task_getter(fn1)
+            task._task.push_after(fn2)
             return fn1
 
-        def inner(fn2):
-            fn2.push_after(fn1)
-            return fn2
+        def inner(fn):
+            task = task_getter(fn)
+            task._task.push_after(fn1)
+            return fn
 
         return inner
 
