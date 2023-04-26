@@ -1,4 +1,4 @@
-import asyncio, copy, re
+import asyncio, copy, inspect, re
 import typing
 from concurrent import futures
 from concurrent.futures import ThreadPoolExecutor
@@ -90,14 +90,23 @@ def _flatten_to_taskmaps(
     return [(iden, calls) for iden, calls in taskable_map.items()]
 
 
-def _handle_coroutine(coro: typing.Coroutine):
+def _handle_coroutine(
+        coro: typing.Coroutine,
+        multithread_mode: bool | None = None):
     policy = asyncio.get_event_loop_policy()
     try:
         loop = policy.get_event_loop()
     except RuntimeError:
         loop = policy.new_event_loop()
 
-    return loop.run_until_complete(coro)
+    ret = loop.run_until_complete(coro)
+    if multithread_mode:
+        # Closing the loop after running the
+        # coroutine. Should prevent issues when
+        # loop.__del__ is called.
+        loop.close()
+
+    return ret
 
 
 def _process_tasks(
@@ -137,7 +146,7 @@ def _process_tasks_multi(
             raise err #type: ignore[misc]
 
     tpool  = ThreadPoolExecutor(root_task.thread_count, root_task.identifier)
-    tqueue = TaskQueue([(inner, c) for c in calls]) #type: ignore[misc]
+    tqueue = TaskQueue([(inner, c) for c in calls], root_task.thread_count) #type: ignore[misc]
 
     with tpool:
         while True:
@@ -146,15 +155,19 @@ def _process_tasks_multi(
             while len(tqueue):
                 next_calls.append(tqueue.pop())
 
-            results = futures.wait\
-            (
-                [
-                    tpool.submit(fn, *call[0], **call[1])
-                    for fn, call in next_calls
-                ],
-                30, "FIRST_EXCEPTION" # Fail in 30 seconds of less!
-            )
+            submitted = []
+            for fn, callargs in next_calls:
+                # Transform callable if it is a
+                # coroutine.
+                if inspect.iscoroutinefunction(fn):
+                    callargs = ((fn(*callargs[0], **callargs[1]), True), {})
+                    fn = _handle_coroutine
 
+                # Submit function call to executor.
+                submitted.append(tpool.submit(fn, *callargs[0], **callargs[1]))
+
+            # Await results from futures.
+            results = futures.wait(submitted, 30, "FIRST_EXCEPTION")
             for result in results.done:
                 result.result()
 
