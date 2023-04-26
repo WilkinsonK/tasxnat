@@ -20,7 +20,7 @@ _TCStackCallable = typing.Callable[["TaskedCallable"], None]
 _TaskableCallable = typing.Callable[typing.Concatenate["Taskable", _Ps], _RT]
 
 
-class TaskQueue(deque[tuple[typing.Callable, typing.ParamSpec]]):
+class TaskQueue(deque[tuple[typing.Callable, tuple[tuple, dict]]]):
     ...
 
 
@@ -212,7 +212,7 @@ class Taskable(typing.Protocol):
     def request_new_thread(
         self,
         fn: typing.Callable,
-        callargs: typing.ParamSpec,
+        callargs: tuple[tuple, dict],
         *,
         timeout: int | float | None):
         """
