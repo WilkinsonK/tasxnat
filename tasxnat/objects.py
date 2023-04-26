@@ -247,17 +247,19 @@ class SimpleTaskBroker(TaskBroker):
         return wrapper
 
     def before(self, fn1, fn2=None):
+        task_getter = lambda fn:  self.__register__[_simple_identifier(fn)]
 
-        def wrapper(fn_a, fn_b):
-            task_getter = lambda fn:  self.__register__[_simple_identifier(fn)]
-            if fn_b:
-                task_getter(fn_a)._task.push_before(fn_b)
-                return fn_a
-            def inner(fn):
-                task_getter(fn_b).push_before(fn)
-            return inner
+        if fn2:
+            task = task_getter(fn1)
+            task._task.push_before(fn2)
+            return fn1
 
-        return wrapper(fn1, fn2)
+        def inner(fn):
+            task = task_getter(fn)
+            task._task.push_before(fn1)
+            return fn
+
+        return inner
 
     def after(self, fn1, fn2=None):
 
