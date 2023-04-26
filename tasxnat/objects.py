@@ -85,11 +85,11 @@ class SimpleTaskedCallable(TaskedCallable):
         return rt
 
     def __before__(self):
-        for fn in self.__before_tasks__:
+        for fn in reversed(self.__before_tasks__):
             fn(self)
 
     def __after__(self) -> None:
-        for fn in self.__after_tasks__:
+        for fn in reversed(self.__after_tasks__):
             fn(self)
 
 
