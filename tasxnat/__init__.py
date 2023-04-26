@@ -12,7 +12,7 @@ __all__ =\
     "SimpleTaskedCallable",
     "AsyncTaskedCallable"
 )
-__version__ = (0, 0, 8, "rc1")
+__version__ = (0, 0, 8, "rc2")
 
 from tasxnat.protocols import Taskable, TaskBroker
 from tasxnat.objects import\
