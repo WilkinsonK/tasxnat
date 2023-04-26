@@ -1,9 +1,12 @@
 import abc, typing
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import pool
 
 __all__ = (
     (
         "_PoolFactory",
+        "_TCStack",
         "TaskedCallable",
         "TaskBroker",
         "Taskable"
@@ -15,6 +18,10 @@ _RT_co = typing.TypeVar("_RT_co", covariant=True)
 _PoolFactory = type[pool.Pool] | typing.Callable[[], pool.Pool]
 _TCStackCallable = typing.Callable[["TaskedCallable"], None]
 _TaskableCallable = typing.Callable[typing.Concatenate["Taskable", _Ps], _RT]
+
+
+class TaskQueue(deque[tuple[typing.Callable, typing.ParamSpec]]):
+    ...
 
 
 class _TCStack(typing.Sequence[_TCStackCallable]):
@@ -178,15 +185,41 @@ class Taskable(typing.Protocol):
 
     @classmethod
     @abc.abstractmethod
-    def from_callable(cls,
-                      broker: "TaskBroker",
-                      fn: typing.Callable,
-                      thread_count: typing.Optional[int],
-                      is_strict: typing.Optional[bool],
-                      is_async: typing.Optional[bool]) -> typing.Self:
+    def from_callable(
+        cls,
+        broker: "TaskBroker",
+        fn: typing.Callable,
+        thread_count: typing.Optional[int],
+        is_strict: typing.Optional[bool],
+        is_async: typing.Optional[bool]) -> typing.Self:
         """
         Create a `Taskable` from a callable
         object.
+        """
+
+    @abc.abstractmethod
+    def set_thread_pool(self, pool: ThreadPoolExecutor, queue: TaskQueue):
+        """
+        Sets the thread pool object to be used
+        in multi-threaded mode. This method is
+        intended for internal use only.
+
+        Throws an error if this `Taskable` is not
+        meant to be run in multi-threaded mode.
+        """
+
+    @abc.abstractmethod
+    def request_new_thread(
+        self,
+        fn: typing.Callable,
+        callargs: typing.ParamSpec):
+        """
+        Attempt to run some process in the
+        attached thread pool. If successful, the
+        call will be sent to the queue.
+
+        Throws an error if this `Taskable` is not
+        meant to be run in multi-threaded mode.
         """
 
 
@@ -210,22 +243,27 @@ class TaskBroker(typing.Protocol):
 
     @typing.overload
     @abc.abstractmethod
-    def task(self,
-             *,
-             klass: typing.Optional[type[Taskable]],
-             thread_count: typing.Optional[int],
-             is_strict: typing.Optional[bool],
-             is_async: typing.Optional[bool]) -> typing.Callable[[], TaskedCallable]:
+    def task(
+        self,
+        /,
+        *,
+        klass: typing.Optional[type[Taskable]],
+        thread_count: typing.Optional[int],
+        is_strict: typing.Optional[bool],
+        is_async: typing.Optional[bool]
+        ) -> typing.Callable[[], TaskedCallable]:
         ...
 
     @abc.abstractmethod
-    def task(self,
-             fn: typing.Callable | None = None,
-             *,
-             klass: typing.Optional[type[Taskable]] = None,
-             thread_count: typing.Optional[int] = None,
-             is_strict: typing.Optional[bool] = None,
-             is_async: typing.Optional[bool] = None) -> TaskedCallable | typing.Callable[[], TaskedCallable]: 
+    def task(
+        self,
+        fn: typing.Callable | None = None, /,
+        *,
+        klass: typing.Optional[type[Taskable]] = None,
+        thread_count: typing.Optional[int] = None,
+        is_strict: typing.Optional[bool] = None,
+        is_async: typing.Optional[bool] = None,
+        ) -> TaskedCallable | typing.Callable[[], TaskedCallable]: 
         """
         Creates and registers a `Taskable`
         object.
@@ -235,7 +273,8 @@ class TaskBroker(typing.Protocol):
     @abc.abstractmethod
     def before(
         self,
-        fn: _TCStackCallable, /) -> typing.Callable[[], TaskedCallable]:
+        fn: _TCStackCallable,
+        /) -> typing.Callable[[], TaskedCallable]:
         ...
 
     @typing.overload
@@ -243,7 +282,8 @@ class TaskBroker(typing.Protocol):
     def before(
         self,
         fn1: TaskedCallable,
-        fn2: _TCStackCallable, /) -> TaskedCallable:
+        fn2: _TCStackCallable,
+        /) -> TaskedCallable:
         ...
 
     @typing.overload
@@ -251,14 +291,16 @@ class TaskBroker(typing.Protocol):
     def before(
         self,
         fn1: TaskedCallable | _TCStackCallable,
-        fn2: TaskedCallable | _TCStackCallable | None, /) -> TaskedCallable | typing.Callable[[], TaskedCallable]:
+        fn2: TaskedCallable | _TCStackCallable | None,
+        /) -> TaskedCallable | typing.Callable[[], TaskedCallable]:
         ...
 
     @abc.abstractmethod
     def before(
         self,
         fn1: TaskedCallable | _TCStackCallable,
-        fn2: TaskedCallable | _TCStackCallable | None = None) -> TaskedCallable | typing.Callable[[], TaskedCallable]:
+        fn2: TaskedCallable | _TCStackCallable | None = None,
+        /) -> TaskedCallable | typing.Callable[[], TaskedCallable]:
         """
         Push the target callable on to the
         *before* stack of the given
@@ -285,14 +327,16 @@ class TaskBroker(typing.Protocol):
     def after(
         self,
         fn1: TaskedCallable | _TCStackCallable,
-        fn2: TaskedCallable | _TCStackCallable | None, /) -> TaskedCallable | typing.Callable[[], TaskedCallable]:
+        fn2: TaskedCallable | _TCStackCallable | None,
+        /) -> TaskedCallable | typing.Callable[[], TaskedCallable]:
         ...
 
     @abc.abstractmethod
     def after(
         self,
         fn1: TaskedCallable | _TCStackCallable,
-        fn2: TaskedCallable | _TCStackCallable | None = None) -> TaskedCallable | typing.Callable[[], TaskedCallable]:
+        fn2: TaskedCallable | _TCStackCallable | None = None,
+        /) -> TaskedCallable | typing.Callable[[], TaskedCallable]:
         """
         Push the target callable on to the
         *after* stack of the given
@@ -308,18 +352,20 @@ class TaskBroker(typing.Protocol):
 
     @typing.overload
     @abc.abstractmethod
-    def process_tasks(self, *task_callers: str) -> None:
+    def process_tasks(self, /, *task_callers: str) -> None:
         ...
 
     @typing.overload
     @abc.abstractmethod
     def process_tasks(self,
+                      /,
                       *task_callers: str,
                       process_count: typing.Optional[int]) -> None:
         ...
 
     @abc.abstractmethod
     def process_tasks(self,
+                      /,
                       *task_callers: str,
                       process_count: typing.Optional[int] = None) -> None:
         """

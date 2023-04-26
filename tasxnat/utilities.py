@@ -3,7 +3,7 @@ import typing
 from concurrent import futures
 from concurrent.futures import ThreadPoolExecutor
 
-from tasxnat.protocols import Taskable
+from tasxnat.protocols import Taskable, TaskQueue
 
 
 __all__ = (
@@ -107,8 +107,8 @@ def _process_tasks(
 
     for args, kwds in calls:
         task = copy.deepcopy(root_task)
-
         task.handle(*args, **kwds)
+
         if task.is_success:
             continue
 
@@ -122,13 +122,12 @@ def _process_tasks_multi(
         root_task: Taskable,
         calls: typing.Iterable[tuple[tuple, dict]],
         strict_mode: bool):
-    tpool = ThreadPoolExecutor(root_task.thread_count, root_task.identifier)
     # loop = asyncio.get_event_loop_policy().get_event_loop()
 
     def inner(call: tuple[tuple, dict]):
-        args, kwds = call
         task = copy.deepcopy(root_task)
-        task.handle(*args, **kwds)
+        task.set_thread_pool(tpool, tqueue)
+        task.handle(*call[0], **call[1])
 
         if task.is_success:
             return
@@ -137,10 +136,22 @@ def _process_tasks_multi(
             _, err = task.failure
             raise err #type: ignore[misc]
 
-    with tpool:
-        results = futures.wait([
-            tpool.submit(inner, call)
-            for call in calls], 30, "FIRST_EXCEPTION")
+    tpool  = ThreadPoolExecutor(root_task.thread_count, root_task.identifier)
+    tqueue = TaskQueue([(inner, c) for c in calls]) #type: ignore[misc]
 
-        for result in results.done:
-            result.result()
+    with tpool:
+        while True:
+
+            next_calls = []
+            while len(tqueue):
+                next_calls.append(tqueue.pop())
+
+            results = futures.wait([
+                tpool.submit(*call)
+                for call in next_calls], 30, "FIRST_EXCEPTION")
+
+            for result in results.done:
+                result.result()
+
+            if not len(tqueue):
+                break

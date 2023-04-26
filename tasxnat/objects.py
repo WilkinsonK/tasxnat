@@ -1,4 +1,4 @@
-import inspect, multiprocessing as mp
+import inspect, time, multiprocessing as mp
 import typing
 from multiprocessing import pool
 
@@ -185,6 +185,33 @@ class SimpleTaskable(Taskable):
                       is_strict=None,
                       is_async=None):
         return cls(broker, fn, thread_count, is_strict, is_async)
+
+    def set_thread_pool(self, pool, queue):
+        if self.thread_count <= 1:
+            raise RuntimeError(f"Threading was not enable for this task.")
+
+        self._thread_pool = pool
+        self._thread_queue = queue
+
+    def request_new_thread(
+            self,
+            fn,
+            callargs,
+            *,
+            timeout: int | float | None = None):
+
+        if self.thread_count <= 1:
+            raise RuntimeError(f"Threading was not enable for this task.")
+
+        tqueue = self._thread_queue
+        request_t = time.monotonic()
+        while (len(tqueue) + 1) == tqueue.maxlen:
+            time.sleep(0.1)
+            curr_t = time.monotonic()
+            if timeout and (curr_t - request_t) > timeout:
+                raise TimeoutError("Thread request took too long.")
+
+        tqueue.append((fn, callargs))
 
     def __init__(self,
                  broker: TaskBroker,
