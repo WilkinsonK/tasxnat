@@ -212,7 +212,9 @@ class Taskable(typing.Protocol):
     def request_new_thread(
         self,
         fn: typing.Callable,
-        callargs: typing.ParamSpec):
+        callargs: typing.ParamSpec,
+        *,
+        timeout: int | float | None):
         """
         Attempt to run some process in the
         attached thread pool. If successful, the
