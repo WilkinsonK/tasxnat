@@ -124,10 +124,10 @@ def _process_tasks_multi(
         strict_mode: bool):
     # loop = asyncio.get_event_loop_policy().get_event_loop()
 
-    def inner(call: tuple[tuple, dict]):
+    def inner(*args, **kwds):
         task = copy.deepcopy(root_task)
         task.set_thread_pool(tpool, tqueue)
-        task.handle(*call[0], **call[1])
+        task.handle(*args, **kwds)
 
         if task.is_success:
             return
@@ -146,9 +146,14 @@ def _process_tasks_multi(
             while len(tqueue):
                 next_calls.append(tqueue.pop())
 
-            results = futures.wait([
-                tpool.submit(*call)
-                for call in next_calls], 30, "FIRST_EXCEPTION")
+            results = futures.wait\
+            (
+                [
+                    tpool.submit(fn, *call[0], **call[1])
+                    for fn, call in next_calls
+                ],
+                30, "FIRST_EXCEPTION" # Fail in 30 seconds of less!
+            )
 
             for result in results.done:
                 result.result()
