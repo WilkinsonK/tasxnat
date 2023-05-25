@@ -2,6 +2,7 @@ import asyncio, concurrent.futures, functools, inspect, typing, warnings
 
 __all__ =\
 (
+    "get_broker",
     "TaskConfig",
     "TaskResult",
     "Task",
@@ -53,6 +54,11 @@ def _set_task_strictness(broker: "TaskBroker", task: typing.Any, strict: bool):
         return inner(task)
     else:
         return inner
+
+
+def _task_repr(obj: typing.Any):
+    idn = hex(id(obj))
+    return f"<{obj.__class__.__qualname__}({obj.name}) at {idn}>"
 
 
 def _use_task_broker(broker: "TaskBroker", task: typing.Any):
@@ -188,11 +194,14 @@ class Task(typing.Generic[_Ps, _Rt]):
         self._config = self.Config(broker, taskable, **kwds)
 
     def __repr__(self):
-        idn = hex(id(self))
-        return f"<{self.__class__.__qualname__}({self.name}) at {idn}>"
+        return _task_repr(self)
 
 
 class TaskBroker:
+
+    @property
+    def name(self):
+        return self._name
 
     @property
     def runner(self):
@@ -229,13 +238,40 @@ class TaskBroker:
             return self._register[name]
         raise ValueError("expected a Task or Taskable object, got", type(obj))
 
-    def __init__(self, *, workers=None, debug=None):
+    def __repr__(self):
+        return _task_repr(self)
+
+    def __init__(self, *, debug=None, name=None, workers=None):
         self._executor = concurrent.futures.ThreadPoolExecutor(workers)
         self._register = dict[TaskId, Task]()
-        self._runner   = asyncio.Runner(debug=debug)
+        self._runner = asyncio.Runner(debug=debug)
+
+        # Register this broker for easier future
+        # lookup.
+        name = name or inspect.getmodule(inspect.stack()[1][0]).__name__
+        contains_name = [k for k in _task_broker_register.keys() if name in k]
+        if contains_name:
+            name = f"{name}:{len(contains_name)}"
+        elif name != "tasxnat.root_broker":
+            name = ":".join([name, "main"])
+
+        _task_broker_register[name] = self
+        self._name = name
 
     def __del__(self):
         self.shutdown()
+
+
+def get_broker(id=None, **kwds):
+    if not id:
+        return _root_broker
+    if id not in _task_broker_register:
+        return TaskBroker(name=id, **kwds)
+    return _task_broker_register[id]
+
+
+_task_broker_register = dict[typing.Hashable, TaskBroker]()
+_root_broker = TaskBroker(name="tasxnat.root_broker")
 
 
 class TaskTimeWarning(RuntimeWarning):

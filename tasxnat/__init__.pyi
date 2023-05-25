@@ -9,11 +9,21 @@ Taskable    = typing.Callable[_Ps, _Rt] | type[typing.Callable[_Ps, _Rt]]
 TaskId      = typing.Hashable
 TaskWrapper = typing.Callable[[Taskable], Taskable] | typing.Callable[[Task], Task]
 
-@typing.runtime_checkable
-class TaskBroker(typing.Protocol):
+def get_broker(id: typing.Hashable = ..., **kwds) -> TaskBroker:
+    """
+    Retrieve a `TaskBroker` from the registry.
+    if no id is given return the root_broker. If
+    the id is not registered, create a new
+    instance.
+    """
+
+class TaskBroker:
     """
     Manages creation and scheduling of `Task`s.
     """
+    @property
+    def name(self):
+        """Name of this `TaskBroker`."""
     @property
     def runner(self) -> asyncio.Runner:
         """
@@ -71,11 +81,11 @@ class TaskBroker(typing.Protocol):
         Registers a callable object as a `Task`
         to this `TaskBroker`.
         """
+    def __repr__(self) -> str: ...
     def __init__(self, **kwds) -> None: ...
     def __del__(self) -> None: ...
 
-@typing.runtime_checkable
-class Task(typing.Protocol[_Ps, _Rt_co]):
+class Task(typing.Generic[_Ps, _Rt_co]):
     """
     Representative object of some `Taskable`
     which manages and handles it accordingly.
@@ -126,7 +136,7 @@ class TaskConfig(typing.Protocol):
         """
     def __init__(self, broker: TaskBroker, taskable: Taskable, **kwds) -> None: ...
 
-class TaskResult(typing.Protocol[_Rt_co]):
+class TaskResult(typing.Generic[_Rt_co]):
     """
     Result from an attempted handle of some
     `Task`.
