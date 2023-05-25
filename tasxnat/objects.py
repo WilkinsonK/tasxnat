@@ -1,5 +1,3 @@
-import asyncio, concurrent.futures, functools, inspect, typing, warnings
-
 __all__ =\
 (
     "get_broker",
@@ -10,8 +8,13 @@ __all__ =\
     "TaskTimeWarning"
 )
 
+import asyncio, concurrent.futures, functools, inspect, typing, warnings
+
+from tasxnat.protocols import TaskI, TaskBrokerI, TaskResultI
+
 _Ps = typing.ParamSpec("_Ps")
 _Rt = typing.TypeVar("_Rt")
+_Rt_co = typing.TypeVar("_Rt_co", covariant=True)
 
 Tasked      = typing.Callable[_Ps, _Rt]
 Taskable    = typing.Callable[_Ps, _Rt] | type[typing.Callable[_Ps, _Rt]]
@@ -114,7 +117,7 @@ class TaskConfig:
         self._is_async  = inspect.iscoroutinefunction(func)
 
 
-class TaskResult:
+class TaskResult(TaskResultI[_Rt_co]):
 
     @property
     def failure(self):
@@ -139,7 +142,7 @@ class TaskResult:
         self._failure = RuntimeError("Task was never handled.")
 
 
-class Task(typing.Generic[_Ps, _Rt]):
+class Task(TaskI[_Ps, _Rt_co]):
 
     class Config(TaskConfig):
         ...
@@ -197,7 +200,7 @@ class Task(typing.Generic[_Ps, _Rt]):
         return _task_repr(self)
 
 
-class TaskBroker:
+class TaskBroker(TaskBrokerI):
 
     @property
     def name(self):
@@ -262,12 +265,16 @@ class TaskBroker:
         self.shutdown()
 
 
-def get_broker(id=None, **kwds):
-    if not id:
+def get_broker(id=None, *, broker_cls=None, **kwds):
+    if not id and (not kwds and not broker_cls):
         return _root_broker
-    if id not in _task_broker_register:
-        return TaskBroker(name=id, **kwds)
-    return _task_broker_register[id]
+
+    if id in _task_broker_register:
+        return _task_broker_register[id]
+
+    broker_cls = broker_cls or TaskBroker
+    broker = broker_cls(name=id, **kwds)
+    return broker
 
 
 _task_broker_register = dict[typing.Hashable, TaskBroker]()

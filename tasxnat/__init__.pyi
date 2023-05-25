@@ -13,16 +13,16 @@ def get_broker(id: typing.Hashable = ..., **kwds) -> TaskBroker:
     """
     Retrieve a `TaskBroker` from the registry.
     if no id is given return the root_broker. If
-    the id is not registered, create a new
-    instance.
+    the id is not registered or keyword arguments
+    are passed, create a new instance.
     """
 
-class TaskBroker:
+class TaskBrokerI(typing.Protocol):
     """
     Manages creation and scheduling of `Task`s.
     """
     @property
-    def name(self):
+    def name(self) -> typing.LiteralString:
         """Name of this `TaskBroker`."""
     @property
     def runner(self) -> asyncio.Runner:
@@ -85,7 +85,9 @@ class TaskBroker:
     def __init__(self, **kwds) -> None: ...
     def __del__(self) -> None: ...
 
-class Task(typing.Generic[_Ps, _Rt_co]):
+class TaskBroker(TaskBrokerI): ...
+
+class TaskI(typing.Protocol[_Ps, _Rt_co]):
     """
     Representative object of some `Taskable`
     which manages and handles it accordingly.
@@ -110,6 +112,8 @@ class Task(typing.Generic[_Ps, _Rt_co]):
         """
     def __init__(self, broker: TaskBroker, taskable: Taskable, **kwds) -> None: ...
     def __repr__(self) -> str: ...
+
+class Task(TaskI[_Ps, _Rt_co]): ...
 
 class TaskConfig(typing.Protocol):
     """Configuration of some `Task`."""
@@ -136,7 +140,7 @@ class TaskConfig(typing.Protocol):
         """
     def __init__(self, broker: TaskBroker, taskable: Taskable, **kwds) -> None: ...
 
-class TaskResult(typing.Generic[_Rt_co]):
+class TaskResultI(typing.Protocol[_Rt_co]):
     """
     Result from an attempted handle of some
     `Task`.
@@ -157,6 +161,8 @@ class TaskResult(typing.Generic[_Rt_co]):
     def result(self) -> _Rt_co | None:
         """Resulting outcome from handle."""
     def __init__(self) -> None: ...
+
+class TaskResult(TaskResultI[_Rt_co]): ...
 
 class TaskTimeWarning(RuntimeWarning):
     """
