@@ -8,7 +8,7 @@ __all__ =\
     "TaskTimeWarning"
 )
 
-import asyncio, concurrent.futures, functools, inspect, typing, warnings
+import asyncio, concurrent.futures, functools, inspect, time, typing, warnings
 
 from tasxnat.protocols import TaskI, TaskBrokerI, TaskResultI
 
@@ -50,7 +50,7 @@ def _set_task_strictness(broker: "TaskBroker", task: typing.Any, strict: bool):
 
     def inner(wrapped: Task | Taskable):
         task = broker._do_register_lookup(wrapped) #type: ignore[attr-defined]
-        task.config._is_async = strict
+        task.config._is_strict = strict
         return wrapped
 
     if task:
@@ -115,6 +115,7 @@ class TaskConfig:
         self._broker = broker
         self._include_broker = False
         self._is_async  = inspect.iscoroutinefunction(func)
+        self._is_strict = False
 
 
 class TaskResult(TaskResultI[_Rt_co]):
@@ -182,12 +183,14 @@ class Task(TaskI[_Ps, _Rt_co]):
             if self.config.is_strict:
                 raise result.failure
             else:
-                message = f"{self.name} failed with message: {error!r}"
+                message = f"{self.name} failed with message: {result.failure!s}"
                 warnings.warn(message, TaskTimeWarning)
 
         return result
 
     def _handle_async(self, *args, **kwds):
+        while self.parent.runner.get_loop().is_running():
+            time.sleep(0.1)
         return self.parent.runner.run(self.config.caller(*args, **kwds))
 
     def _handle_synch(self, *args, **kwds):
@@ -210,7 +213,7 @@ class TaskBroker(TaskBrokerI):
     def runner(self):
         return self._runner
 
-    def broker(self, task):
+    def broker(self, task=None):
         return _use_task_broker(self, task)
 
     def register(self, task: Task):
@@ -225,10 +228,15 @@ class TaskBroker(TaskBrokerI):
         self._executor.shutdown(cancel_futures=True)
 
     def strict(self, task=None, *, strict=None):
-        return _set_task_strictness(self, task, strict or False)
+        return _set_task_strictness(self, task, strict or True)
 
     def taskable(self, taskable=None, *, task_cls=None, **kwds):
         return _create_task(self, taskable, task_cls=task_cls or Task, **kwds)
+
+    def wait(self, future_rt, *, timeout=None):
+        gen = concurrent.futures.as_completed(future_rt, timeout=timeout)
+        for result in gen:
+            yield result.result()
 
     def _do_register_lookup(self, obj):
         name = None
@@ -236,6 +244,8 @@ class TaskBroker(TaskBrokerI):
             name = _caller_name(obj)
         elif isinstance(obj, Task):
             name = obj.name
+        elif isinstance(obj, str):
+            name = obj
 
         if name:
             return self._register[name]
@@ -277,9 +287,9 @@ def get_broker(id=None, *, broker_cls=None, **kwds):
     return broker
 
 
-_task_broker_register = dict[typing.Hashable, TaskBroker]()
+_task_broker_register: dict[typing.Hashable, TaskBrokerI] = dict()
 _root_broker = TaskBroker(name="tasxnat.root_broker")
 
 
 class TaskTimeWarning(RuntimeWarning):
-    ...
+    pass

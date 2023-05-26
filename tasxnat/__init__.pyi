@@ -1,13 +1,15 @@
-import asyncio, typing
+import asyncio, concurrent.futures, typing
 
 _Ps = typing.ParamSpec("_Ps")
 _Rt = typing.TypeVar("_Rt")
 _Rt_co = typing.TypeVar("_Rt_co", covariant=True)
 
+FutureResult = concurrent.futures.Future[TaskResult[_Rt_co]]
+
 Tasked      = typing.Callable[_Ps, _Rt]
 Taskable    = typing.Callable[_Ps, _Rt] | type[typing.Callable[_Ps, _Rt]]
 TaskId      = typing.Hashable
-TaskWrapper = typing.Callable[[Taskable], Taskable] | typing.Callable[[Task], Task]
+TaskWrapper = typing.Callable
 
 def get_broker(id: typing.Hashable = ..., **kwds) -> TaskBroker:
     """
@@ -47,9 +49,11 @@ class TaskBrokerI(typing.Protocol):
         `TaskBroker`.
         """
     @typing.overload
-    def schedule(self, task: Task[_Ps, _Rt]) -> TaskResult[_Rt]: ...
+    def schedule(self, task: str, *args, **kwds) -> FutureResult[_Rt]: ...
     @typing.overload
-    def schedule(self, task: Taskable[_Ps, _Rt]) -> TaskResult[_Rt]:
+    def schedule(self, task: Task[_Ps, _Rt], *args, **kwds) -> FutureResult[_Rt]: ...
+    @typing.overload
+    def schedule(self, task: Taskable[_Ps, _Rt], *args, **kwds) -> FutureResult[_Rt]:
         """
         Submit the `Task` to be run by a worker.
 
@@ -80,6 +84,12 @@ class TaskBrokerI(typing.Protocol):
         """
         Registers a callable object as a `Task`
         to this `TaskBroker`.
+        """
+    def wait(self, future_rt: typing.Iterable[FutureResult], **kwds) -> typing.Generator[TaskResult, None, None]:
+        """
+        Waits for the given futures to complete
+        returning the contained `TaskResult`s.
+        `TaskResults` are returned 'as completed'.
         """
     def __repr__(self) -> str: ...
     def __init__(self, **kwds) -> None: ...
