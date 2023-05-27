@@ -191,7 +191,28 @@ class Task(TaskI[_Ps, _Rt_co]):
     def _handle_async(self, *args, **kwds):
         while self.parent.runner.get_loop().is_running():
             time.sleep(0.1)
-        return self.parent.runner.run(self.config.caller(*args, **kwds))
+
+        loop = self.parent.runner.get_loop()
+        coro = self.config.caller(*args, **kwds)
+
+        # We want to try and use the runner first
+        # if the loop is not actively running.
+        # Otherwise we will schedule the task as
+        # usual.
+        if not loop.is_running():
+            return self.parent.runner.run(coro)
+
+        future = concurrent.futures.Future()
+
+        async def inner(coro, fut):
+            fut.set_result(await coro)
+
+        # Schedules the wrapper where we apply
+        # the result from our caller to the
+        # Future.
+        loop.call_soon_threadsafe(asyncio.ensure_future, inner(coro, future))
+
+        return future.result(10) #TODO: How to best make this dynamic?
 
     def _handle_synch(self, *args, **kwds):
         return self.config.caller(*args, **kwds)

@@ -95,7 +95,10 @@ class TaskBrokerI(typing.Protocol):
     def __init__(self, **kwds) -> None: ...
     def __del__(self) -> None: ...
 
-class TaskBroker(TaskBrokerI): ...
+class TaskBroker(TaskBrokerI):
+    """
+    Manages creation and scheduling of `Task`s.
+    """
 
 class TaskI(typing.Protocol[_Ps, _Rt_co]):
     """
@@ -123,7 +126,12 @@ class TaskI(typing.Protocol[_Ps, _Rt_co]):
     def __init__(self, broker: TaskBroker, taskable: Taskable, **kwds) -> None: ...
     def __repr__(self) -> str: ...
 
-class Task(TaskI[_Ps, _Rt_co]): ...
+class Task(TaskI[_Ps, _Rt_co]):
+    """
+    Representative object of some `Taskable`
+    which manages and handles it accordingly.
+    """
+
 
 class TaskConfig(typing.Protocol):
     """Configuration of some `Task`."""
