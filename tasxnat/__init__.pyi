@@ -142,6 +142,9 @@ class TaskConfig(typing.Protocol):
     def caller(self) -> Tasked:
         """Callable owned by the `Task`."""
     @property
+    def name(self) -> typing.LiteralString:
+        """Name of the `Task`."""
+    @property
     def include_broker(self) -> bool:
         """
         Whether the parent `TaskBroker` is passed

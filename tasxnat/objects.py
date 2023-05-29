@@ -80,6 +80,7 @@ def _use_task_broker(broker: "TaskBroker", task: typing.Any):
 class TaskConfig:
     _broker: typing.Optional["TaskBroker"]
     _caller: Tasked
+    _name:   str
     _include_broker: bool
     _is_async: bool
     _is_strict: bool
@@ -91,6 +92,10 @@ class TaskConfig:
     @property
     def caller(self):
         return self._caller
+
+    @property
+    def name(self):
+        return self._name
 
     @property
     def include_broker(self):
@@ -113,6 +118,7 @@ class TaskConfig:
             func = taskable
 
         self._broker = broker
+        self._name = _caller_name(taskable)
         self._include_broker = False
         self._is_async  = inspect.iscoroutinefunction(func)
         self._is_strict = False
@@ -154,7 +160,7 @@ class Task(TaskI[_Ps, _Rt_co]):
 
     @property
     def name(self):
-        return _caller_name(self.config.caller)
+        return self.config.name
 
     @property
     def parent(self):
